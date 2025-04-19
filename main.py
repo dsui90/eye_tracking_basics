@@ -6,7 +6,33 @@ from helper_functions.load_video_file import load_mp4_file
 from helper_functions.tmp import binarize_image, otsu_threshold
 import random
 
+def get_darkest_region(image, region_size=10):
+    """
+    Get the region with the darkest area in the image.
+    
+    Args:
+        image (numpy.ndarray): Input grayscale image.
+        region_size (int): Size of the region to consider for darkness.
+    
+    Returns:
+        tuple: Coordinates of the darkest region (x, y).
+    """
+    # Convert to grayscale if the image is not already
+    if len(image.shape) == 3:
+        gray_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    else:
+        gray_image = image
 
+    # apply mean filter to the image
+    kernel = np.ones((region_size, region_size), np.float32) / (region_size * region_size)
+    mean_image = cv2.filter2D(gray_image, -1, kernel)
+    
+    # Find the coordinates of the darkest region
+    min_val, _, min_loc, _ = cv2.minMaxLoc(mean_image)
+    
+    # return the coordinates of the darkest region
+    return min_loc, min_val
+    
 def main():
     """
     Main entry point of the application.
@@ -23,10 +49,15 @@ def main():
     # mod2 init outside the loop
     frame = video_capture.read()[1]
     orig_shape = frame.shape
+    
+    divisor = 4
+    frame = cv2.resize(frame, (frame.shape[1] // divisor, frame.shape[0] // divisor))
     kernel_size = frame.shape[0] // 16
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
-    
+    region_size = frame.shape[0] // 42 *4
+    mean_filter = np.ones((region_size, region_size), np.float32) / (region_size * region_size)
     # Loop through the video frames
+
     while True:
         ret, frame = video_capture.read()
         if not ret:
@@ -34,30 +65,31 @@ def main():
             break
         # mod 1: resize
         
-        frame = cv2.resize(frame, (frame.shape[1] // 2, frame.shape[0] // 2))
+        frame = cv2.resize(frame, (frame.shape[1] // divisor, frame.shape[0] // divisor))
         
         # Process the frame (convert to grayscale and rotate by 180 degrees)
         processed_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         processed_frame = cv2.rotate(processed_frame, cv2.ROTATE_180)
-        binary_frame = cv2.threshold(processed_frame, 70, 255, cv2.THRESH_BINARY)[1]
+        
+        
+        mean_image = cv2.filter2D(processed_frame, -1, mean_filter)
+        
+        # Find the coordinates of the darkest region
+        min_val, _, min_loc, _ = cv2.minMaxLoc(mean_image)
+        #min_loc, min_val = get_darkest_region(processed_frame, region_size=region_size)
+       
+        #binary_frame_0 = cv2.threshold(processed_frame, 70, 255, cv2.THRESH_BINARY)[1]
+        binary_frame_0 = cv2.threshold(processed_frame, 1.5*min_val, 255, cv2.THRESH_BINARY)[1]
         # use closing to fill small holes
         #kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
-        binary_frame = cv2.morphologyEx(binary_frame, cv2.MORPH_CLOSE, kernel)
+        binary_frame_1 = cv2.morphologyEx(binary_frame_0, cv2.MORPH_CLOSE, kernel)
         # use opening to remove small noise
         #kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
-        binary_frame = cv2.morphologyEx(binary_frame, cv2.MORPH_OPEN, kernel)
+        binary_frame_2 = cv2.morphologyEx(binary_frame_1, cv2.MORPH_OPEN, kernel)
         
-        ### get the sklera region
-        binary_frame_2 = cv2.threshold(processed_frame, 120, 255, cv2.THRESH_BINARY)[1]
-        # use closing to fill small holes
-        kernel_2 = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-        binary_frame_2 = cv2.morphologyEx(binary_frame_2, cv2.MORPH_CLOSE, kernel_2)
-        # use opening to remove small noise
-        kernel_2 = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-        binary_frame_2 = cv2.morphologyEx(binary_frame_2, cv2.MORPH_OPEN, kernel_2)
-        
+    
         # Detect contours in the binary image
-        contours, _ = cv2.findContours(binary_frame, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+        contours, _ = cv2.findContours(binary_frame_2, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
         detected_ellipses = []
         
         fitting = 'LS'
@@ -65,13 +97,14 @@ def main():
             for contour in contours:
                 if len(contour) >= 20:  # Minimum points required to fit an ellipse
                     ellipse = cv2.fitEllipse(contour)
-                    if ellipse[1][0] < binary_frame.shape[0]/2 and ellipse[1][1] < binary_frame.shape[0]/2:
+                    if ellipse[1][0] < binary_frame_0.shape[0]/2 and ellipse[1][1] < binary_frame_0.shape[0]/2:
                         detected_ellipses.append(ellipse)  
         
         elif fitting == 'Hough':
             # use hough transform to detect circles in cv2
-            circles = cv2.HoughCircles(binary_frame, cv2.HOUGH_GRADIENT, dp=1, minDist=20,
-                                param1=25, param2=10, minRadius=0, maxRadius=0)
+            # canny edge detection
+            circles = cv2.HoughCircles(binary_frame_2, cv2.HOUGH_GRADIENT, dp=1, minDist=20,
+                                param1=5, param2=10, minRadius=0, maxRadius=binary_frame_0.shape[0]//2)
         
             # Convert the output to a list of tuples (x, y, radius)
             if circles is not None:
@@ -93,15 +126,29 @@ def main():
             color = (0, 255, 0)  # Green color
             try:
                 cv2.ellipse(processed_frame_bgr, ellipse, color, 2)
+                #print(ellipse)
+                angle_radians = np.deg2rad(ellipse[-1])
+                orthogonal_direction = (-np.cos(angle_radians), -np.sin(angle_radians))
+                scale = 50
+                orthogonal_vector = (int(ellipse[0][0] + scale * orthogonal_direction[0]),
+                             int(ellipse[0][1] + scale * orthogonal_direction[1]))
+                cv2.line(processed_frame_bgr, (int(ellipse[0][0]), int(ellipse[0][1])), orthogonal_vector, (255, 0, 0), 2)
             except Exception as e:
                 print(f"Error drawing ellipse: {e}")
                 continue
-
+        mean_image_bgr = cv2.cvtColor(mean_image, cv2.COLOR_GRAY2BGR)
+        # Draw a rectangle around the darkest region
+        x, y = min_loc[0]-region_size//2, min_loc[1]-region_size//2
+        w, h = region_size, region_size
+        cv2.rectangle(mean_image_bgr, (x, y), (x + w, y + h), (255, 0, 0), 2)
+        # Draw a circle at the center of the darkest region
+        center = (x + w // 2, y + h // 2)
+        cv2.circle(mean_image_bgr, center, 1, (0, 255, 0), -1)
 
         # Stack the processed frame and binary frame side by side
-        side_by_side = cv2.hconcat([processed_frame_bgr, cv2.cvtColor(binary_frame, cv2.COLOR_GRAY2BGR)])
+        side_by_side = cv2.hconcat([processed_frame_bgr, mean_image_bgr])
 
-        side_by_side_2 = cv2.hconcat([processed_frame_bgr, cv2.cvtColor(binary_frame_2, cv2.COLOR_GRAY2BGR)])
+        side_by_side_2 = cv2.hconcat([cv2.cvtColor(binary_frame_0, cv2.COLOR_GRAY2BGR), cv2.cvtColor(binary_frame_2, cv2.COLOR_GRAY2BGR)])
 
         # stack both side by side
         side_by_side = cv2.vconcat([side_by_side, side_by_side_2])
