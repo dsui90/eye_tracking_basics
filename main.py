@@ -6,6 +6,82 @@ from helper_functions.load_video_file import load_mp4_file
 from helper_functions.tmp import binarize_image, otsu_threshold
 import random
 
+def horizontal_std(bin_img):
+    """
+    Calculate the horizontal variance of black pixels in a binary image.
+    
+    Args:
+        bin_img (numpy.ndarray): Input binary image.
+    
+    Returns:
+        numpy.ndarray: Horizontal variance of black pixels.
+    """
+    # Convert to grayscale if the image is not already
+    if len(bin_img.shape) == 3:
+        gray_image = cv2.cvtColor(bin_img, cv2.COLOR_BGR2GRAY)
+    else:
+        gray_image = bin_img
+
+    # get positions of black pixels
+    black_pixels = np.where(gray_image == 0)
+    # calculate the horizontal variance of black pixels
+    return np.std(black_pixels[1])
+
+
+def my_thresh_fn_python(img, threshold):
+    """
+    Custom thresholding function to binarize an image.
+    
+    Args:
+        img (numpy.ndarray): Input grayscale image.
+        threshold (int): Threshold value for binarization.
+    
+    Returns:
+        numpy.ndarray: Binarized image.
+    """
+    # Create a binary mask based on the threshold
+    binary_mask = img > threshold
+    binary_mask = binary_mask.astype(np.uint8) * 255
+    return binary_mask
+
+def my_thresh_fn_row_major(img, threshold):
+    """
+    Custom thresholding function to binarize an image.
+    
+    Args:
+        img (numpy.ndarray): Input grayscale image.
+        threshold (int): Threshold value for binarization.
+    
+    Returns:
+        numpy.ndarray: Binarized image.
+    """
+    # Create a binary mask based on the threshold
+    binary_mask = np.zeros_like(img, dtype=np.uint8)
+    for i in range(img.shape[0]):
+        for j in range(img.shape[1]):
+            if img[i, j] > threshold:
+                binary_mask[i, j] = 255
+    return binary_mask
+
+def my_thresh_fn_col_major(img, threshold):
+    """
+    Custom thresholding function to binarize an image.
+    
+    Args:
+        img (numpy.ndarray): Input grayscale image.
+        threshold (int): Threshold value for binarization.
+    
+    Returns:
+        numpy.ndarray: Binarized image.
+    """
+    # Create a binary mask based on the threshold
+    binary_mask = np.zeros_like(img, dtype=np.uint8)
+    for j in range(img.shape[1]):
+        for i in range(img.shape[0]):
+            if img[i, j] > threshold:
+                binary_mask[i, j] = 255
+    return binary_mask
+
 def get_darkest_region(image, region_size=10):
     """
     Get the region with the darkest area in the image.
@@ -50,9 +126,9 @@ def main():
     frame = video_capture.read()[1]
     orig_shape = frame.shape
     
-    divisor = 4
+    divisor = 10
     frame = cv2.resize(frame, (frame.shape[1] // divisor, frame.shape[0] // divisor))
-    kernel_size = frame.shape[0] // 16
+    kernel_size = frame.shape[0] // 16 # 42 #// 16
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
     region_size = frame.shape[0] // 42 *4
     mean_filter = np.ones((region_size, region_size), np.float32) / (region_size * region_size)
@@ -79,7 +155,10 @@ def main():
         #min_loc, min_val = get_darkest_region(processed_frame, region_size=region_size)
        
         #binary_frame_0 = cv2.threshold(processed_frame, 70, 255, cv2.THRESH_BINARY)[1]
-        binary_frame_0 = cv2.threshold(processed_frame, 1.5*min_val, 255, cv2.THRESH_BINARY)[1]
+        #binary_frame_0 = my_thresh_fn_python(processed_frame, 1.5*min_val)
+        #binary_frame_0 =my_thresh_fn_col_major(processed_frame, 1.5*min_val)
+        binary_frame_0 =my_thresh_fn_row_major(processed_frame, 1.5*min_val)
+        #binary_frame_0 = cv2.threshold(processed_frame, 1.5*min_val, 255, cv2.THRESH_BINARY)[1]
         # use closing to fill small holes
         #kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
         binary_frame_1 = cv2.morphologyEx(binary_frame_0, cv2.MORPH_CLOSE, kernel)
@@ -87,56 +166,61 @@ def main():
         #kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
         binary_frame_2 = cv2.morphologyEx(binary_frame_1, cv2.MORPH_OPEN, kernel)
         
+        is_blink = False
+        if horizontal_std(binary_frame_2) > binary_frame_2.shape[1] // 20:
+            is_blink = True
     
-        # Detect contours in the binary image
-        contours, _ = cv2.findContours(binary_frame_2, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
-        detected_ellipses = []
-        
-        fitting = 'LS'
-        if fitting == 'LS':
-            for contour in contours:
-                if len(contour) >= 20:  # Minimum points required to fit an ellipse
-                    ellipse = cv2.fitEllipse(contour)
-                    if ellipse[1][0] < binary_frame_0.shape[0]/2 and ellipse[1][1] < binary_frame_0.shape[0]/2:
-                        detected_ellipses.append(ellipse)  
-        
-        elif fitting == 'Hough':
-            # use hough transform to detect circles in cv2
-            # canny edge detection
-            circles = cv2.HoughCircles(binary_frame_2, cv2.HOUGH_GRADIENT, dp=1, minDist=20,
-                                param1=5, param2=10, minRadius=0, maxRadius=binary_frame_0.shape[0]//2)
-        
-            # Convert the output to a list of tuples (x, y, radius)
-            if circles is not None:
-                circles = np.uint16(np.around(circles))
-                detected_ellipses = [((circle[0], circle[1]), (circle[2],circle[2]), 0) for circle in circles[0, :]]
-            else:
-                detected_ellipses = []
-        elif fitting == 'RANSAC_Circle':
-            # use ransac to detect circles in cv2
-            detected_ellipses = []
-            
-        
         # Convert processed_frame to BGR for colored ellipses
         processed_frame_bgr = cv2.cvtColor(processed_frame, cv2.COLOR_GRAY2BGR)
-
-        # Draw the detected ellipses on the processed frame in random colors
-        for ellipse in detected_ellipses:
-            # Generate a random color
-            color = (0, 255, 0)  # Green color
-            try:
-                cv2.ellipse(processed_frame_bgr, ellipse, color, 2)
-                #print(ellipse)
-                angle_radians = np.deg2rad(ellipse[-1])
-                orthogonal_direction = (-np.cos(angle_radians), -np.sin(angle_radians))
-                scale = 50
-                orthogonal_vector = (int(ellipse[0][0] + scale * orthogonal_direction[0]),
-                             int(ellipse[0][1] + scale * orthogonal_direction[1]))
-                cv2.line(processed_frame_bgr, (int(ellipse[0][0]), int(ellipse[0][1])), orthogonal_vector, (255, 0, 0), 2)
-            except Exception as e:
-                print(f"Error drawing ellipse: {e}")
-                continue
         mean_image_bgr = cv2.cvtColor(mean_image, cv2.COLOR_GRAY2BGR)
+        
+        if not is_blink:
+            # Detect contours in the binary image
+            contours, _ = cv2.findContours(binary_frame_2, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+            detected_ellipses = []
+            
+            fitting = 'LS'
+            if fitting == 'LS':
+                for contour in contours:
+                    if len(contour) >= min(20, max(binary_frame_0.shape[0]//20,5)):  # Minimum points required to fit an ellipse
+                        ellipse = cv2.fitEllipse(contour)
+                        if ellipse[1][0] < binary_frame_0.shape[0]/2 and ellipse[1][1] < binary_frame_0.shape[0]/2:
+                            detected_ellipses.append(ellipse)  
+            
+            elif fitting == 'Hough':
+                # use hough transform to detect circles in cv2
+                # canny edge detection
+                circles = cv2.HoughCircles(binary_frame_2, cv2.HOUGH_GRADIENT, dp=1, minDist=20,
+                                    param1=5, param2=10, minRadius=0, maxRadius=binary_frame_0.shape[0]//2)
+            
+                # Convert the output to a list of tuples (x, y, radius)
+                if circles is not None:
+                    circles = np.uint16(np.around(circles))
+                    detected_ellipses = [((circle[0], circle[1]), (circle[2],circle[2]), 0) for circle in circles[0, :]]
+                else:
+                    detected_ellipses = []
+            elif fitting == 'RANSAC_Circle':
+                # use ransac to detect circles in cv2
+                detected_ellipses = []
+            
+            # Draw the detected ellipses on the processed frame in random colors
+            for ellipse in detected_ellipses:
+                # Generate a random color
+                color = (0, 255, 0)  # Green color
+                try:
+                    cv2.ellipse(processed_frame_bgr, ellipse, color, 2)
+                    #print(ellipse)
+                    angle_radians = np.deg2rad(ellipse[-1])
+                    orthogonal_direction = (-np.cos(angle_radians), -np.sin(angle_radians))
+                    scale = 50
+                    orthogonal_vector = (int(ellipse[0][0] + scale * orthogonal_direction[0]),
+                                int(ellipse[0][1] + scale * orthogonal_direction[1]))
+                    cv2.line(processed_frame_bgr, (int(ellipse[0][0]), int(ellipse[0][1])), orthogonal_vector, (255, 0, 0), 2)
+                except Exception as e:
+                    print(f"Error drawing ellipse: {e}")
+                    continue
+                
+        
         # Draw a rectangle around the darkest region
         x, y = min_loc[0]-region_size//2, min_loc[1]-region_size//2
         w, h = region_size, region_size
@@ -171,6 +255,18 @@ def main():
             2, 
             cv2.LINE_AA
         )
+        
+        if is_blink:
+            cv2.putText(
+                side_by_side, 
+                "Blink Detected", 
+                (10, 60), 
+                cv2.FONT_HERSHEY_SIMPLEX, 
+                1, 
+                (0, 0, 255), 
+                2, 
+                cv2.LINE_AA
+            )
 
         # Display the combined frames using OpenCV
         cv2.imshow('Processed Frame and Binary Frame', side_by_side)
