@@ -6,6 +6,13 @@ from helper_functions.load_video_file import load_mp4_file
 from helper_functions.tmp import binarize_image, otsu_threshold
 import random
 
+def is_blinking_frame(binary_frame, threshold=None):
+    if threshold is None:
+        threshold = binary_frame.shape[1] // 20
+    if horizontal_std(binary_frame) > threshold:
+        return True
+    return False
+  
 def horizontal_std(bin_img):
     """
     Calculate the horizontal variance of black pixels in a binary image.
@@ -44,43 +51,6 @@ def my_thresh_fn_python(img, threshold):
     binary_mask = binary_mask.astype(np.uint8) * 255
     return binary_mask
 
-def my_thresh_fn_row_major(img, threshold):
-    """
-    Custom thresholding function to binarize an image.
-    
-    Args:
-        img (numpy.ndarray): Input grayscale image.
-        threshold (int): Threshold value for binarization.
-    
-    Returns:
-        numpy.ndarray: Binarized image.
-    """
-    # Create a binary mask based on the threshold
-    binary_mask = np.zeros_like(img, dtype=np.uint8)
-    for i in range(img.shape[0]):
-        for j in range(img.shape[1]):
-            if img[i, j] > threshold:
-                binary_mask[i, j] = 255
-    return binary_mask
-
-def my_thresh_fn_col_major(img, threshold):
-    """
-    Custom thresholding function to binarize an image.
-    
-    Args:
-        img (numpy.ndarray): Input grayscale image.
-        threshold (int): Threshold value for binarization.
-    
-    Returns:
-        numpy.ndarray: Binarized image.
-    """
-    # Create a binary mask based on the threshold
-    binary_mask = np.zeros_like(img, dtype=np.uint8)
-    for j in range(img.shape[1]):
-        for i in range(img.shape[0]):
-            if img[i, j] > threshold:
-                binary_mask[i, j] = 255
-    return binary_mask
 
 def get_darkest_region(image, region_size=10):
     """
@@ -126,14 +96,15 @@ def main():
     frame = video_capture.read()[1]
     orig_shape = frame.shape
     
-    divisor = 10
+    divisor = 2
     frame = cv2.resize(frame, (frame.shape[1] // divisor, frame.shape[0] // divisor))
     kernel_size = frame.shape[0] // 16 # 42 #// 16
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
     region_size = frame.shape[0] // 42 *4
     mean_filter = np.ones((region_size, region_size), np.float32) / (region_size * region_size)
     # Loop through the video frames
-
+    show_all = True
+    show_ellipse = True
     while True:
         ret, frame = video_capture.read()
         if not ret:
@@ -156,36 +127,38 @@ def main():
        
         #binary_frame_0 = cv2.threshold(processed_frame, 70, 255, cv2.THRESH_BINARY)[1]
         #binary_frame_0 = my_thresh_fn_python(processed_frame, 1.5*min_val)
-        #binary_frame_0 =my_thresh_fn_col_major(processed_frame, 1.5*min_val)
-        binary_frame_0 =my_thresh_fn_row_major(processed_frame, 1.5*min_val)
-        #binary_frame_0 = cv2.threshold(processed_frame, 1.5*min_val, 255, cv2.THRESH_BINARY)[1]
+        binary_frame_0 = cv2.threshold(processed_frame, 1.5*min_val, 255, cv2.THRESH_BINARY)[1]
         # use closing to fill small holes
-        #kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
         binary_frame_1 = cv2.morphologyEx(binary_frame_0, cv2.MORPH_CLOSE, kernel)
         # use opening to remove small noise
-        #kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
         binary_frame_2 = cv2.morphologyEx(binary_frame_1, cv2.MORPH_OPEN, kernel)
         
-        is_blink = False
-        if horizontal_std(binary_frame_2) > binary_frame_2.shape[1] // 20:
-            is_blink = True
+        is_blink = is_blinking_frame(binary_frame_2)
+        
     
         # Convert processed_frame to BGR for colored ellipses
         processed_frame_bgr = cv2.cvtColor(processed_frame, cv2.COLOR_GRAY2BGR)
         mean_image_bgr = cv2.cvtColor(mean_image, cv2.COLOR_GRAY2BGR)
-        
-        if not is_blink:
+        contour_image = np.ones_like(processed_frame_bgr) * 255
+        contour_image_with_ellipse = np.ones_like(processed_frame_bgr) * 255
+        if not is_blink and show_ellipse:
             # Detect contours in the binary image
             contours, _ = cv2.findContours(binary_frame_2, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
             detected_ellipses = []
+            
+            # draw contours on white background
+            
+            cv2.drawContours(contour_image, contours, -1, (0, 0, 0), 1)
+            cv2.drawContours(contour_image_with_ellipse, contours, -1, (0, 0, 0), 1)
+            
             
             fitting = 'LS'
             if fitting == 'LS':
                 for contour in contours:
                     if len(contour) >= min(20, max(binary_frame_0.shape[0]//20,5)):  # Minimum points required to fit an ellipse
-                        ellipse = cv2.fitEllipse(contour)
-                        if ellipse[1][0] < binary_frame_0.shape[0]/2 and ellipse[1][1] < binary_frame_0.shape[0]/2:
-                            detected_ellipses.append(ellipse)  
+                        mellipse = cv2.fitEllipse(contour)
+                        if mellipse[1][0] < binary_frame_0.shape[0]/2 and mellipse[1][1] < binary_frame_0.shape[0]/2:
+                            detected_ellipses.append(mellipse)  
             
             elif fitting == 'Hough':
                 # use hough transform to detect circles in cv2
@@ -208,14 +181,16 @@ def main():
                 # Generate a random color
                 color = (0, 255, 0)  # Green color
                 try:
-                    cv2.ellipse(processed_frame_bgr, ellipse, color, 2)
+                    #cv2.ellipse(processed_frame_bgr, ellipse, color, 2)
+                    cv2.ellipse(contour_image_with_ellipse, ellipse, color, 1)
+                    
                     #print(ellipse)
                     angle_radians = np.deg2rad(ellipse[-1])
                     orthogonal_direction = (-np.cos(angle_radians), -np.sin(angle_radians))
                     scale = 50
                     orthogonal_vector = (int(ellipse[0][0] + scale * orthogonal_direction[0]),
                                 int(ellipse[0][1] + scale * orthogonal_direction[1]))
-                    cv2.line(processed_frame_bgr, (int(ellipse[0][0]), int(ellipse[0][1])), orthogonal_vector, (255, 0, 0), 2)
+                    #cv2.line(processed_frame_bgr, (int(ellipse[0][0]), int(ellipse[0][1])), orthogonal_vector, (255, 0, 0), 2)
                 except Exception as e:
                     print(f"Error drawing ellipse: {e}")
                     continue
@@ -230,14 +205,18 @@ def main():
         cv2.circle(mean_image_bgr, center, 1, (0, 255, 0), -1)
 
         # Stack the processed frame and binary frame side by side
-        side_by_side = cv2.hconcat([processed_frame_bgr, mean_image_bgr])
+        side_by_side = cv2.hconcat([processed_frame_bgr, mean_image_bgr, contour_image])
 
-        side_by_side_2 = cv2.hconcat([cv2.cvtColor(binary_frame_0, cv2.COLOR_GRAY2BGR), cv2.cvtColor(binary_frame_2, cv2.COLOR_GRAY2BGR)])
+        side_by_side_2 = cv2.hconcat([
+            cv2.cvtColor(binary_frame_0, cv2.COLOR_GRAY2BGR), 
+            cv2.cvtColor(binary_frame_2, cv2.COLOR_GRAY2BGR), 
+            contour_image_with_ellipse])
 
+        #side_by_side_3 = cv2.hconcat([contour_image, contour_image])
         # stack both side by side
         side_by_side = cv2.vconcat([side_by_side, side_by_side_2])
         
-        side_by_side = cv2.resize(side_by_side, (orig_shape[1] * 2, orig_shape[0] * 2))
+        side_by_side = cv2.resize(side_by_side, (int(orig_shape[1] * 3), int(orig_shape[0] * 2)))
 
         # Update frame count and calculate FPS
         frame_count += 1
@@ -245,16 +224,17 @@ def main():
         fps = frame_count / elapsed_time
 
         # Overlay FPS on the image
-        cv2.putText(
-            side_by_side, 
-            f"FPS: {fps:.2f}", 
-            (10, 30), 
-            cv2.FONT_HERSHEY_SIMPLEX, 
-            1, 
-            (255, 255, 255), 
-            2, 
-            cv2.LINE_AA
-        )
+        if show_ellipse and False:
+            cv2.putText(
+                side_by_side, 
+                f"FPS: {fps:.2f}", 
+                (10, 30), 
+                cv2.FONT_HERSHEY_SIMPLEX, 
+                1, 
+                (255, 255, 255), 
+                2, 
+                cv2.LINE_AA
+            )
         
         if is_blink:
             cv2.putText(
@@ -268,8 +248,13 @@ def main():
                 cv2.LINE_AA
             )
 
+        if show_all:
+            cv2.imshow('Processed Frame and Binary Frame', side_by_side)
+        else:
+            processed_frame_bgr = cv2.resize(processed_frame_bgr, (orig_shape[1], orig_shape[0]))
+            cv2.imshow('Processed Frame', processed_frame_bgr)
         # Display the combined frames using OpenCV
-        cv2.imshow('Processed Frame and Binary Frame', side_by_side)
+        #cv2.imshow('Processed Frame and Binary Frame', side_by_side)
 
         # Exit the loop if 'q' is pressed
         if cv2.waitKey(1) & 0xFF == ord('q'):
