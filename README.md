@@ -3,11 +3,12 @@
 This project runs in a conda environment.
 To set it up, please set up conda on your distribution
 and run the following terminal commands:
+(e.g. windows: Anaconda Prompt)
 
 ```bash
 conda create -n eye_tracking_env python=3.12
 conda activate eye_tracking_env
-pip install opencv-python, notebook, matplotlib
+pip install opencv-python
 ```
 
 # Data

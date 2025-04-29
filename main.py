@@ -3,7 +3,6 @@ from time import time
 
 import numpy as np
 from helper_functions.load_video_file import load_mp4_file
-from helper_functions.tmp import binarize_image, otsu_threshold
 import random
 
 def is_blinking_frame(binary_frame, threshold=None):
@@ -181,7 +180,7 @@ def main():
                 # Generate a random color
                 color = (0, 255, 0)  # Green color
                 try:
-                    #cv2.ellipse(processed_frame_bgr, ellipse, color, 2)
+                    cv2.ellipse(processed_frame_bgr, ellipse, color, 2)
                     cv2.ellipse(contour_image_with_ellipse, ellipse, color, 1)
                     
                     #print(ellipse)
@@ -190,7 +189,7 @@ def main():
                     scale = 50
                     orthogonal_vector = (int(ellipse[0][0] + scale * orthogonal_direction[0]),
                                 int(ellipse[0][1] + scale * orthogonal_direction[1]))
-                    #cv2.line(processed_frame_bgr, (int(ellipse[0][0]), int(ellipse[0][1])), orthogonal_vector, (255, 0, 0), 2)
+                    cv2.line(processed_frame_bgr, (int(ellipse[0][0]), int(ellipse[0][1])), orthogonal_vector, (255, 0, 0), 2)
                 except Exception as e:
                     print(f"Error drawing ellipse: {e}")
                     continue
@@ -224,7 +223,7 @@ def main():
         fps = frame_count / elapsed_time
 
         # Overlay FPS on the image
-        if show_ellipse and False:
+        if show_ellipse and True:
             cv2.putText(
                 side_by_side, 
                 f"FPS: {fps:.2f}", 
